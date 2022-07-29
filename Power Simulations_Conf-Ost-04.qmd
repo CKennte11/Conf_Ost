@@ -1,0 +1,331 @@
+---
+title: "Power Analysis - Source-Justify-01"
+author: "Christoph Kenntemich, Selma Rudert"
+format: html
+editor: visual
+---
+
+## Loading packages
+
+```{r}
+#| label: loading packages
+#| code-fold: true
+#| results: false
+#| warning: false
+
+library(MASS)
+library(stringr)
+library(psych)
+library(psr)
+library(lme4)
+library(effsize)
+library(tidyverse)
+library(corrr)
+library(broom)
+```
+
+# Power Simulation: Conf-Ost-04
+
+## Estimated Population Effects
+
+<b>No norm</b><br>
+Mean frequencies from the previous studies.<br>
+p(exclusion | no norm) = 0.43<br>
+p(confrontation | no norm) = 0.42
+
+<b>Acceptance norm</b><br>
+Confrontations decrease by 30%; Exclusions increase by 25%<br>
+For simplification all percentages from previous studies were rounded to the nearest integer
+p(confrontation | acceptance norm) = 0.42 - 0.3 * 0.42 = 0.29<br>
+p(exclusion | acceptance norm) = 0.43 + 0.25 * 0.43 = 0.54
+
+
+<b>Challenge norm</b><br>
+Confrontations increase by 30%; Exclusion decreases by 30% - compared to no norm
+p(confrontation | challenge norm) = 0.42 + 0.42 * 0.3 = 0.55<br>
+p(exclusion | challenge norm) = 0.43 - 0.3 * 0.43 = 0.3
+
+<b>Parameter summary:</b><br>
+p_conf_none = 0.42,<br>
+p_excl_none = 0.43,<br>
+p_conf_accept = 0.29,<br>
+p_excl_accept = 0.54,<br>
+p_conf_challenge = 0.55,<br>
+p_excl_challenge = 0.3 <br>
+
+## Simulate one dataset for visualization
+```{r}
+#| code-fold: true
+#| label: Simulate to visualize
+#| warning: false
+#| echo: false
+
+#Parameter
+p_conf_none = 0.42
+p_excl_none = 0.43
+p_conf_accept = 0.29
+p_excl_accept = 0.54
+p_conf_challenge = 0.55
+p_excl_challenge = 0.3
+n = 450
+
+simdata_accept <- tibble(norm = "acceptance",
+                          target_response_DV = sample(c("excluded", "confronted", "included"), 
+                                                      size = n/3, prob = c(p_excl_accept , p_conf_accept, 
+                                                                           (1 - p_excl_accept - p_conf_accept)), replace = TRUE),
+                          target_excluded = ifelse(target_response_DV == "excluded", "yes", "no"),
+                          target_confronted = ifelse(target_response_DV == "confronted", "yes", "no"))
+  
+  simdata_challenge <- tibble(norm = "challenge",
+                          target_response_DV = sample(c("excluded", "confronted", "included"), 
+                                                      size = n/3, prob = c(p_excl_challenge , p_conf_challenge, 
+                                                                           (1 - p_excl_challenge - p_conf_challenge)), replace = TRUE),
+                          target_excluded = ifelse(target_response_DV == "excluded", "yes", "no"),
+                          target_confronted = ifelse(target_response_DV == "confronted", "yes", "no"))
+  
+  simdata_none <- tibble(norm = "none",
+                          target_response_DV = sample(c("excluded", "confronted", "included"), 
+                                                      size = n/3, prob = c(p_excl_none , p_conf_none, 
+                                                                           (1 - p_excl_none - p_conf_none)), replace = TRUE),
+                          target_excluded = ifelse(target_response_DV == "excluded", "yes", "no"),
+                          target_confronted = ifelse(target_response_DV == "confronted", "yes", "no"))
+  
+  simdata_1 <- full_join(simdata_accept, simdata_challenge)
+
+ simdata <- full_join(simdata_1, simdata_none)
+
+ #visualize simulated data
+ ##with percentages
+addPercent <- function(x, ...) #<== function will add " %" to any number, and allows for any additional formatting through "format".
+  format(paste0(x, " %"), ...)
+ 
+ simdata %>%
+  group_by(norm, target_response_DV) %>%
+  summarise(n = n()) %>%
+  mutate(percentage_in_cond = (n / sum(n)) * 100) %>% knitr::kable()
+
+simdata %>%
+  group_by(norm, target_response_DV) %>%
+  summarise(n = n()) %>%
+  mutate(percentage = (n / sum(n)) * 100) %>%
+  ggplot(aes(x = norm, fill = target_response_DV, y = percentage)) + 
+  geom_bar(position="dodge", stat="identity") +
+  ylim(0, 100) +
+  scale_y_continuous(labels = addPercent,limits = c(0, 100)) +
+  xlab("interaction norm") +
+  ylab("frequency of response") + 
+  theme_bw() + 
+  theme(axis.text = element_text(size = 13)) + 
+  scale_fill_manual(values = c("confronted"= "darkgrey",
+                               "excluded" = "black",
+                               "included" = "lightgrey"),
+                    aesthetics = "fill",
+                    breaks = c("confronted","excluded", "included"),
+                    labels = c("confront","exclude", "include")) +
+  guides(fill=guide_legend(title="response to target")) +
+  theme(plot.title = element_text(hjust = 0.5, size = 16), 
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        axis.title = element_text(size = 13)
+  ) 
+
+```
+
+## Function to simulate datasets
+
+```{r}
+#| code-fold: true
+#| label: Simulate word counts
+#| warning: false
+simdata_CO4 = function(n, p_conf_none, p_excl_none, p_conf_challenge, 
+                    p_excl_challenge, p_conf_accept, p_excl_accept){
+  simdata_accept <- tibble(norm = "acceptance",
+                          target_response_DV = sample(c("excluded", "confronted", "included"), 
+                                                      size = n/3, prob = c(p_excl_accept , p_conf_accept, 
+                                                                           (1 - p_excl_accept - p_conf_accept)), replace = TRUE),
+                          target_excluded = ifelse(target_response_DV == "excluded", "yes", "no"),
+                          target_confronted = ifelse(target_response_DV == "confronted", "yes", "no"))
+  
+  simdata_challenge <- tibble(norm = "challenge",
+                          target_response_DV = sample(c("excluded", "confronted", "included"), 
+                                                      size = n/3, prob = c(p_excl_challenge , p_conf_challenge, 
+                                                                           (1 - p_excl_challenge - p_conf_challenge)), replace = TRUE),
+                          target_excluded = ifelse(target_response_DV == "excluded", "yes", "no"),
+                          target_confronted = ifelse(target_response_DV == "confronted", "yes", "no"))
+  
+  simdata_none <- tibble(norm = "none",
+                          target_response_DV = sample(c("excluded", "confronted", "included"), 
+                                                      size = n/3, prob = c(p_excl_none , p_conf_none, 
+                                                                           (1 - p_excl_none - p_conf_none)), replace = TRUE),
+                          target_excluded = ifelse(target_response_DV == "excluded", "yes", "no"),
+                          target_confronted = ifelse(target_response_DV == "confronted", "yes", "no"))
+  
+  simdata_1 <- full_join(simdata_accept, simdata_challenge)
+
+ simdata <- full_join(simdata_1, simdata_none)
+ 
+ return(simdata)
+  
+}
+```
+
+## Power simulation for each Hypothesis
+
+### Hypothesis 1
+
+Participants will be more likely to exclude a norm-violating target when injunctive interaction norms demand accepting
+other’s opinions vs. when injunctive interaction norms encourage challenging other’s opinions.
+
+### Hypothesis 2
+
+Participants will be more likely to exclude a norm-violating target when injunctive interaction norms demand accepting
+other’s opinions vs. when there is no explicit injunctive interaction norm.
+
+### Hypothesis 3
+
+Participants will be less likely to confront a norm-violating target when injunctive interaction norms demand accepting other’s opinions vs. when injunctive interaction norms encourage challenging other’s opinions.
+
+### Hypothesis 4
+
+Participants will be less likely to confront a norm-violating target when injunctive interaction norms demand accepting other’s opinions vs. when there is no explicit injunctive interaction norm.
+
+```{r}
+#| code-fold: true
+#| label: Power Hypotheses
+#| warning: false
+
+# n = total sample size
+# mu_excl = Assumed true mean, when targets exclude and write an answer
+# mu_incl = Assumed true mean, when targets include and write an answer
+# prob_low = general probability that participants does not write an elaborate answer (2-4 Words)
+
+power_H1_H2_H3_H4 = function(n, reps, p_conf_none, p_excl_none, p_conf_challenge, 
+                    p_excl_challenge, p_conf_accept, p_excl_accept, alpha = 0.05, conf.level = 0.95){
+  # Create 1 to reps simulated datasets
+  sims = replicate(n = reps,
+                   simdata_CO4(n = n, p_conf_none = p_conf_none, p_excl_none = p_excl_none, 
+                               p_conf_challenge = p_conf_challenge, p_excl_challenge = p_excl_challenge, 
+                               p_conf_accept = p_conf_accept, p_excl_accept = p_excl_accept),
+                   simplify = FALSE)
+  
+  # Hypothesis 1 - Run an equivalent number of analyses
+  sims_filtered_H1 = purrr::map(sims, ~ .x %>% filter(norm != "none"))
+ 
+  
+  sims2_H1 = purrr::map(sims_filtered_H1, ~ chisq.test(x = .x$norm, y = .x$target_excluded))
+
+
+  # Put all the results into a data frame (tibble)
+  sims3_H1 = purrr::map(sims2_H1,
+                     ~ tibble::rownames_to_column(as.data.frame(.x$p.value, .x$parameter),"Test"))
+  # Combine all the data frames into one
+  simsdf_H1 = bind_rows(sims3_H1, .id = "nrep")
+  # Summarize results by coefficient
+  simspow_H1 = simsdf_H1 %>%
+    group_by("Chi-square test") %>%
+    # Calculate the power (number of results with p-value < alpha)
+      summarize(
+        power = mean(`.x$p.value` < alpha),
+        # Calculate confidence intervals
+        power.lci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[1],
+        power.uci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[2],
+        .groups = 'drop'
+)
+
+
+  # Hypothesis 2 - Run an equivalent number of analyses
+  sims_filtered_H2 = purrr::map(sims, ~ .x %>% filter(norm != "challenge"))
+ 
+  
+  sims2_H2 = purrr::map(sims_filtered_H2, ~ chisq.test(x = .x$norm, y = .x$target_excluded))
+
+
+  # Put all the results into a data frame (tibble)
+  sims3_H2 = purrr::map(sims2_H2,
+                     ~ tibble::rownames_to_column(as.data.frame(.x$p.value, .x$parameter),"Test"))
+  # Combine all the data frames into one
+  simsdf_H2 = bind_rows(sims3_H2, .id = "nrep")
+  # Summarize results by coefficient
+  simspow_H2 = simsdf_H2 %>%
+    group_by("Chi-square test") %>%
+    # Calculate the power (number of results with p-value < alpha)
+    summarize(
+      power = mean(`.x$p.value` < alpha),
+      # Calculate confidence intervals
+      power.lci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[1],
+      power.uci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[2],
+      .groups = 'drop'
+)
+  
+  # Hypothesis 3 - Run an equivalent number of analyses
+  sims_filtered_H3 = purrr::map(sims, ~ .x %>% filter(norm != "none"))
+ 
+  
+  sims2_H3 = purrr::map(sims_filtered_H3, ~ chisq.test(x = .x$norm, y = .x$target_confronted))
+
+
+  # Put all the results into a data frame (tibble)
+  sims3_H3 = purrr::map(sims2_H3,
+                     ~ tibble::rownames_to_column(as.data.frame(.x$p.value, .x$parameter),"Test"))
+  # Combine all the data frames into one
+  simsdf_H3 = bind_rows(sims3_H3, .id = "nrep")
+  # Summarize results by coefficient
+  simspow_H3 = simsdf_H3 %>%
+    group_by("Chi-square test") %>%
+    # Calculate the power (number of results with p-value < alpha)
+      summarize(
+        power = mean(`.x$p.value` < alpha),
+        # Calculate confidence intervals
+        power.lci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[1],
+        power.uci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[2],
+        .groups = 'drop')
+  
+  
+  # Hypothesis 4 - Run an equivalent number of analyses
+  sims_filtered_H4 = purrr::map(sims, ~ .x %>% filter(norm != "challenge"))
+ 
+  
+  sims2_H4 = purrr::map(sims_filtered_H4, ~ chisq.test(x = .x$norm, y = .x$target_confronted))
+
+
+  # Put all the results into a data frame (tibble)
+  sims3_H4 = purrr::map(sims2_H4,
+                     ~ tibble::rownames_to_column(as.data.frame(.x$p.value, .x$parameter),"Test"))
+  # Combine all the data frames into one
+  simsdf_H4 = bind_rows(sims3_H4, .id = "nrep")
+  # Summarize results by coefficient
+  simspow_H4 = simsdf_H4 %>%
+    group_by("Chi-square test") %>%
+    # Calculate the power (number of results with p-value < alpha)
+    summarize(
+      power = mean(`.x$p.value` < alpha),
+      # Calculate confidence intervals
+      power.lci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[1],
+      power.uci = prop.test(sum(`.x$p.value` < alpha), reps)$conf.int[2],
+      .groups = 'drop'
+)
+  
+ simspow_H1_H2_H3_H4 = bind_rows(simspow_H1, simspow_H2, simspow_H3, simspow_H4,.id = "Hypothesis")
+
+  # Return table of results
+  return(simspow_H1_H2_H3_H4)
+}
+
+
+pwr_H1_H2_H3_H4 = power_H1_H2_H3_H4(reps = 1000, p_conf_none = 0.42,
+p_excl_none = 0.43,
+p_conf_accept = 0.29,
+p_excl_accept = 0.54,
+p_conf_challenge = 0.55,
+p_excl_challenge = 0.3,
+n = 450)
+
+# Create pretty table to print results
+knitr::kable(pwr_H1_H2_H3_H4 %>%
+               rename(Power = power,
+                      `Lower C.I.` = power.lci,
+                      `Upper C.I.` = power.uci),
+             digits = 2,
+             caption = "Result from Power Simulation for Hypotheses (nreps = 1000)")
+
+```
